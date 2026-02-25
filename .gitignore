@@ -1,0 +1,13 @@
+*
+!.gitignore
+!main.cpp
+!CMakeLists.txt
+!LICENSE
+!README.md
+!scripts/
+!scripts/**
+!input/
+!input/owc.dat
+!input/**/*.txt
+
+*.pyc
