@@ -11,13 +11,14 @@ It is intended for:
 
 - quick regression checks of working-curve behavior,
 - side-by-side comparison of simulated vs analytical tension,
-- generating case CSVs for downstream plotting/inspection.
+
 
 ## Repository layout
 
 - `main.cpp`: C++ validation driver.
 - `input/`: OWC table (`owc.dat`) and case input folders (`linear_wc`, `quadratic_wc`, `exp_wc`).
-- `scripts/`: Python helpers for SYROPE initial-condition calculations.
+- `scripts/mean_tension_verification.py`: Python post-processing/verification script.
+- `scripts/syropepy.py`: SYROPE constitutive helper class used by the Python verifier.
 - `CMakeLists.txt`: build configuration linking against installed MoorDyn + Eigen.
 
 ## Usage
@@ -62,15 +63,11 @@ Examples:
 ./build/main --owc input/owc.dat --case all
 ```
 
-## Optional Python helper
+Driver notes:
 
-`scripts/initial_conditions.py` computes/prints SYROPE initial-condition quantities from `input/owc.dat`.
-
-Run (with Python + NumPy available):
-
-```bash
-python3 scripts/initial_conditions.py
-```
+- `--case` values for C++ are `linear`, `quadratic`, `exponential`, or `all`.
+- `--superimpose-fast` accepts `0|1|true|false`.
+- The C++ driver runs MoorDyn for the selected case(s) using each case `line.txt` under `input/`.
 
 ## Mean tension verification script
 
@@ -86,6 +83,8 @@ python3 scripts/mean_tension_verification.py <all|linear|exp|quadratic> <True|Fa
 	- `linear`, `exp`, `quadratic`: run one case
 	- `all`: run all three in sequence
 - Second argument is `has_fast_loading` and must be exactly `True` or `False`.
+
+Note: Python mode names use `exp`, while the C++ driver uses `exponential`.
 
 Examples:
 
@@ -111,6 +110,20 @@ Console output includes:
 	- whether fast loading is applied
 	- where fast loading is applied (plot right panel strain-tension traces)
 	- L2 error
+
+## Python dependencies
+
+The verification script requires:
+
+- Python 3
+- NumPy
+- Matplotlib
+
+Install example:
+
+```bash
+python3 -m pip install numpy matplotlib
+```
 
 ## License
 
