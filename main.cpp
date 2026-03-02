@@ -462,7 +462,7 @@ form_to_string(WorkingCurveForm form)
 	throw std::invalid_argument("Unknown WorkingCurveForm");
 }
 
-SimResult
+void
 run_case(const WcCase& c,
 	     const Eigen::VectorXd& owc_strains,
 	     const Eigen::VectorXd& owc_tensions,
@@ -573,94 +573,6 @@ run_case(const WcCase& c,
 
 	check_md(MoorDyn_Close(md.sys), "MoorDyn_Close failed for: " + c.input_file);
 	md.sys = nullptr;
-
-	const std::string out_path = line1_output_from_input(c.input_file);
-	Eigen::VectorXd tension_mean_output = load_seg_te_column(out_path);
-
-	const Eigen::Index n =
-	    std::min<Eigen::Index>(tension_mean_output.size(), strain.size());
-	if (n < 2) {
-		throw std::runtime_error("Insufficient output rows for case: " + c.name);
-	}
-
-	Eigen::VectorXd Tmax_mean(n);
-	Tmax_mean[0] = kTmax0;
-	for (Eigen::Index i = 1; i < n; ++i) {
-		Tmax_mean[i] = std::max(Tmax_mean[i - 1], tension_mean_output[i]);
-	}
-
-	Eigen::VectorXd tension_analytical(n);
-	for (Eigen::Index i = 0; i < n; ++i) {
-		tension_analytical[i] = find_mean_tension(strain[i],
-		                                          tension_mean_output[i],
-		                                          Tmax_mean[i],
-		                                          owc_strains,
-		                                          owc_tensions,
-		                                          c.form);
-	}
-
-	const double denom = tension_analytical.squaredNorm();
-	if (denom <= 0.0) {
-		throw std::runtime_error("Invalid analytical tension norm for case: " +
-		                         c.name);
-	}
-
-	const double l2_rel = std::sqrt(
-	    (tension_analytical - tension_mean_output.head(n)).squaredNorm() / denom);
-
-	SimResult result;
-	result.case_name = c.name;
-	result.input_file = c.input_file;
-	result.l2_rel = l2_rel;
-	result.times = times.head(n);
-	result.strain = strain.head(n);
-	result.tension_output = tension_mean_output.head(n);
-	result.tension_analytical = tension_analytical;
-	result.tmax_mean = Tmax_mean;
-	return result;
-}
-
-void
-write_case_csv(const SimResult& result)
-{
-	const std::filesystem::path out_dir =
-	    std::filesystem::path(result.input_file).parent_path();
-	std::filesystem::create_directories(out_dir);
-	const std::filesystem::path csv_path =
-	    out_dir / (result.case_name + "_analysis.csv");
-
-	std::ofstream out(csv_path);
-	if (!out) {
-		throw std::runtime_error("Cannot write CSV: " + csv_path.string());
-	}
-
-	out << "time_s,strain,tension_output_N,tension_analytical_N,tmax_mean_N,error_N\n";
-	out << std::setprecision(16);
-	for (Eigen::Index i = 0; i < result.times.size(); ++i) {
-		const double err = result.tension_analytical[i] - result.tension_output[i];
-		out << result.times[i] << ',' << result.strain[i] << ','
-		    << result.tension_output[i] << ',' << result.tension_analytical[i] << ','
-		    << result.tmax_mean[i] << ',' << err << '\n';
-	}
-}
-
-void
-write_summary_csv(const std::filesystem::path& summary_dir,
-	              const std::vector<SimResult>& results)
-{
-	std::filesystem::create_directories(summary_dir);
-	const std::filesystem::path csv_path = summary_dir / "summary.csv";
-
-	std::ofstream out(csv_path);
-	if (!out) {
-		throw std::runtime_error("Cannot write summary CSV: " + csv_path.string());
-	}
-
-	out << "case,input_file,l2_relative_error\n";
-	out << std::setprecision(16);
-	for (const auto& r : results) {
-		out << r.case_name << ',' << r.input_file << ',' << r.l2_rel << '\n';
-	}
 }
 
 void
@@ -754,33 +666,11 @@ main(int argc, char** argv)
 			throw std::invalid_argument("Unknown --case value: " + case_arg);
 		}
 
-		std::vector<SimResult> results;
-		results.reserve(cases.size());
-
 		for (const auto& c : cases) {
 			std::cout << "Running case: " << c.name << " (" << c.input_file << ")\n";
-			SimResult result =
-			    run_case(c, owc_strains, owc_tensions, superimpose_fast);
-			write_case_csv(result);
-			results.push_back(std::move(result));
+			run_case(c, owc_strains, owc_tensions, superimpose_fast);
 		}
 
-		std::cout << "\nCase Results\n";
-		std::cout << std::left << std::setw(14) << "Case" << std::right
-		          << std::setw(16) << "L2 Rel Error" << "\n";
-		std::cout << std::string(30, '-') << "\n";
-		for (const auto& result : results) {
-			std::cout << std::left << std::setw(14) << result.case_name << std::right
-			          << std::setw(16) << std::scientific << std::setprecision(6)
-			          << result.l2_rel << "\n";
-		}
-		std::cout << std::defaultfloat;
-
-		const std::filesystem::path summary_dir =
-		    std::filesystem::path(cases.front().input_file).parent_path();
-		write_summary_csv(summary_dir, results);
-		std::cout << "Wrote analysis CSV files alongside input files\n";
-		std::cout << "Summary file: " << (summary_dir / "summary.csv") << "\n";
 		return 0;
 	}
 	catch (const std::exception& ex) {
