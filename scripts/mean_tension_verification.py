@@ -8,6 +8,7 @@ from math import isclose
 
 from syropepy import Syrope
 
+# rc('text', usetex=True) # Requires LaTeX installation, so not enabled by default
 rc('font', family='serif', size=11)
 
 kG = 9.80665
