@@ -8,6 +8,11 @@
 !scripts/**
 !input/
 !input/owc.dat
-!input/**/*.txt
+!input/linear_wc/
+!input/linear_wc/**/*.txt
+!input/exp_wc/
+!input/exp_wc/**/*.txt
+!input/quadratic_wc/
+!input/quadratic_wc/**/*.txt
 
 *.pyc
