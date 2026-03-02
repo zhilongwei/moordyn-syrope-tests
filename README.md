@@ -62,15 +62,6 @@ Examples:
 ./build/main --owc input/owc.dat --case all
 ```
 
-## Outputs
-
-For each executed case, the driver writes:
-
-- `<case>_analysis.csv` in that case input directory (for example `input/linear_wc/Linear_analysis.csv`)
-- `summary.csv` in the first selected case directory
-
-Console output includes a per-case table with L2 relative error.
-
 ## Optional Python helper
 
 `scripts/initial_conditions.py` computes/prints SYROPE initial-condition quantities from `input/owc.dat`.
