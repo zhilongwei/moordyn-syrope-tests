@@ -81,6 +81,46 @@ Run (with Python + NumPy available):
 python3 scripts/initial_conditions.py
 ```
 
+## Mean tension verification script
+
+`scripts/mean_tension_verification.py` compares MoorDyn output against the SYROPE-based reference mean-tension history.
+
+### CLI
+
+```bash
+python3 scripts/mean_tension_verification.py <all|linear|exp|quadratic> <True|False>
+```
+
+- First argument selects case(s):
+	- `linear`, `exp`, `quadratic`: run one case
+	- `all`: run all three in sequence
+- Second argument is `has_fast_loading` and must be exactly `True` or `False`.
+
+Examples:
+
+```bash
+python3 scripts/mean_tension_verification.py linear False
+python3 scripts/mean_tension_verification.py exp True
+python3 scripts/mean_tension_verification.py all True
+```
+
+### Outputs
+
+For each executed case, the script writes:
+
+- `tension_strain.png` in the same folder as the input `line.txt`
+	- e.g. `input/linear_wc/tension_strain.png`
+
+Console output includes:
+
+- parsed case summary
+- per-case L2 error (`L2-error between tension and tension_ref`)
+- final end-of-run summary with:
+	- working-curve formula (`WCType`, `k1`, `k2`)
+	- whether fast loading is applied
+	- where fast loading is applied (plot right panel strain-tension traces)
+	- L2 error
+
 ## License
 
 MIT (see `LICENSE`).
