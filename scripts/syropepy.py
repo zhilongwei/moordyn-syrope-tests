@@ -1,6 +1,4 @@
 import numpy as np
-from cmath import isclose
-
 
 class Syrope:
     def __init__(
@@ -75,7 +73,7 @@ class Syrope:
         # Check if wc_slow_spring_strain_static is strictly increasing
         if not np.all(np.diff(self.wc_slow_spring_strain_static) > 0):
             raise ValueError(
-                "owc_slow_spring_strain_static must be strictly increasing"
+                "wc_slow_spring_strain_static must be strictly increasing"
             )
 
     def find_strains(self, Tmean):
@@ -85,45 +83,12 @@ class Syrope:
                 1.0 / self.beta * np.log(1.0 + self.beta / self.alpha * Tmean)
             )
             slow_spring_strain_static = strain_static - fast_spring_strain_static
-        else:  # On the overworking curve
-            strain_static = np.interp(Tmean, self.owc_tension, self.owc_strain)
-            fast_spring_strain_static = (
-                1.0 / self.beta * np.log(1.0 + self.beta / self.alpha * Tmean)
-            )
-            slow_spring_strain_static = strain_static - fast_spring_strain_static
-
-        return strain_static, fast_spring_strain_static, slow_spring_strain_static
-
-    def find_tension(self, strain, slow_spring_strain_static):
-        # Check if the mean tension is below Tmax
-        Tmean = np.interp(
-            slow_spring_strain_static,
-            self.wc_slow_spring_strain_static,
-            self.wc_tension,
-        )
-
-        if Tmean < self.Tmax:
-            strain_static = np.interp(Tmean, self.wc_tension, self.wc_strain)
-            fast_spring_strain_static = (
-                1.0 / self.beta * np.log(1.0 + self.beta / self.alpha * Tmean)
-            )
-            slow_spring_strain_static = strain_static - fast_spring_strain_static
         else:  # On the original working curve
-            Tmean = np.interp(
-                slow_spring_strain_static,
-                self.owc_slow_spring_strain_static,
-                self.owc_tension,
-            )
             strain_static = np.interp(Tmean, self.owc_tension, self.owc_strain)
             fast_spring_strain_static = (
                 1.0 / self.beta * np.log(1.0 + self.beta / self.alpha * Tmean)
             )
             slow_spring_strain_static = strain_static - fast_spring_strain_static
-
-        if isclose(strain, strain_static):
-            print("The provided strain corresponds to the calculated tension.")
-        else:
-            print("Warning: Tension may not correspond to the given strain.")
 
         return strain_static, fast_spring_strain_static, slow_spring_strain_static
 
@@ -156,3 +121,47 @@ class Syrope:
             / self.c2
             * np.sqrt((EA_1 + 4.0 * EA_2) / (3.0 * EA_1 + 4.0 * EA_2))
         )
+    
+    def set_Tmean(self, Tmean):
+        self.Tmean = Tmean
+        self.strain_static, self.fast_spring_strain_static, self.slow_spring_strain_static = self.find_strains(Tmean)
+
+    def slow_spring_strain_rate_from_instantaneous_strain(self, total_eps, dtotal_eps, slow_eps):
+        if self.Tmean < self.Tmax:
+            # On the working curve
+            Tmean = np.interp(slow_eps, self.wc_slow_spring_strain_static, self.wc_tension)
+            K1 = self.alpha + self.beta * Tmean
+            dslow_eps = (K1 * (total_eps - np.interp(Tmean, self.wc_tension, self.wc_strain)) + self.c1 * dtotal_eps) / (self.c1 + self.c2)
+            tension = Tmean + K1 * (total_eps - np.interp(Tmean, self.wc_tension, self.wc_strain))
+        else:
+            # On the original working curve
+            Tmean = np.interp(slow_eps, self.owc_slow_spring_strain_static, self.owc_tension)
+            K1 = self.alpha + self.beta * Tmean
+            dslow_eps = (K1 * (total_eps - np.interp(Tmean, self.owc_tension, self.owc_strain)) + self.c1 * dtotal_eps) / (self.c1 + self.c2)
+            tension = Tmean + K1 * (total_eps - np.interp(Tmean, self.owc_tension, self.owc_strain))
+        
+        if (Tmean > self.Tmax):
+            self.Tmax = Tmean
+            self.set_Tmax(self.Tmax)
+        
+        return dslow_eps, tension
+
+    def slow_spring_strain_rate_from_instantaneous_tension(self, tension, slow_eps):
+        if self.Tmean < self.Tmax:
+            # On the working curve
+            self.Tmean = np.interp(slow_eps, self.wc_slow_spring_strain_static, self.wc_tension)
+            K1 = self.alpha + self.beta * self.Tmean
+            dslow_eps = (tension - self.Tmean) / self.c2
+            total_eps = (tension - self.Tmean) / K1 + np.interp(self.Tmean, self.wc_tension, self.wc_strain)
+        else:
+            # On the original working curve
+            self.Tmean = np.interp(slow_eps, self.owc_slow_spring_strain_static, self.owc_tension)
+            K1 = self.alpha + self.beta * self.Tmean
+            dslow_eps = (tension - self.Tmean) / self.c2
+            total_eps = (tension - self.Tmean) / K1 + np.interp(self.Tmean, self.owc_tension, self.owc_strain)
+        
+        if (self.Tmean > self.Tmax):
+            self.Tmax = self.Tmean
+            self.set_Tmax(self.Tmax)
+        
+        return dslow_eps, total_eps
