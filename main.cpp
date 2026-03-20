@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <moordyn/MoorDyn2.h>
 
 #include <Eigen/Dense>
