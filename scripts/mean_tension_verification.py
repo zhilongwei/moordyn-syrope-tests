@@ -310,7 +310,7 @@ def read_moordyn_output(file_path):
     time    = data[:, 0]
     tension = data[:, 1]
     damping = data[:, 2]
-    strain  = data[:, 8]
+    strain  = data[:, 5]
 
     return time, tension, damping, strain
 
@@ -347,6 +347,40 @@ def build_syrope_from_summary(summary):
 
 def compute_relative_l2_error(reference, numerical):
     return np.sqrt(np.sum((numerical - reference) ** 2) / np.sum(reference ** 2))
+
+
+def compute_phase_l2_errors(time_ref, reference, time_num, numerical, phase_duration, n_phases):
+    """Compute relative L2 error for each phase window.
+
+    Numerical data is interpolated onto reference time stamps so phase masks are
+    consistent even if time vectors differ slightly.
+    """
+    if len(time_ref) < 2 or len(time_num) < 2:
+        raise ValueError("Need at least 2 time points to compute phase L2 errors")
+
+    numerical_on_ref = np.interp(time_ref, time_num, numerical)
+    phase_errors = []
+
+    for phase_idx in range(n_phases):
+        t0 = phase_idx * phase_duration
+        t1 = (phase_idx + 1) * phase_duration
+        mask = (time_ref >= t0) & (time_ref < t1)
+
+        if np.count_nonzero(mask) < 2:
+            phase_errors.append(np.nan)
+            continue
+
+        ref_seg = reference[mask]
+        num_seg = numerical_on_ref[mask]
+        denom = np.sum(ref_seg ** 2)
+        if denom <= 0.0:
+            phase_errors.append(np.nan)
+            continue
+
+        l2 = np.sqrt(np.sum((num_seg - ref_seg) ** 2) / denom)
+        phase_errors.append(l2)
+
+    return phase_errors
 
 def describe_working_curve(summary):
     wc_type = summary.get('WCType')
@@ -567,6 +601,21 @@ def main():
         # L2 error between numerical and reference mean tension
         error = compute_relative_l2_error(mean_tension_ref, tension_num)
         print(f"L2-error between tension and tension_ref: {error:.4e}")
+        phase_errors = compute_phase_l2_errors(
+            time_ref=time,
+            reference=mean_tension_ref,
+            time_num=time_num,
+            numerical=tension_num,
+            phase_duration=Tdur,
+            n_phases=len(phase_list),
+        )
+        print("L2-error per phase:")
+        for i, phase in enumerate(phase_list):
+            l2_phase = phase_errors[i]
+            if np.isnan(l2_phase):
+                print(f"  Phase {phase}: n/a")
+            else:
+                print(f"  Phase {phase}: {l2_phase:.4e}")
 
         summary_rows.append({
             'mode': mode,
@@ -574,6 +623,7 @@ def main():
             'fast_loading': has_fast_loading,
             'fast_loading_where': 'Right panel strain-tension traces in create_comparison_plot()',
             'l2_error': error,
+            'phase_l2_errors': phase_errors,
         })
 
         create_comparison_plot(
@@ -606,6 +656,13 @@ def main():
         print(f"  Fast loading applied: {row['fast_loading']}")
         print(f"  Where applied: {row['fast_loading_where']}")
         print(f"  L2 error: {row['l2_error']:.4e}")
+        print("  L2 error per phase:")
+        for i, phase in enumerate(phase_list):
+            l2_phase = row['phase_l2_errors'][i]
+            if np.isnan(l2_phase):
+                print(f"    Phase {phase}: n/a")
+            else:
+                print(f"    Phase {phase}: {l2_phase:.4e}")
 
 if __name__ == "__main__":
     main()
