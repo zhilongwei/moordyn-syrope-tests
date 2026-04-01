@@ -26,12 +26,12 @@ def parse_syrope_inputs(file_path):
     """Parse the SYROPE-related bits from a MoorDyn input file.
 
     Extracts:
-    - SYROPE `owc.dat` reference
+    - SYROPE settings file reference, or a legacy direct `owc.dat` reference
     - Dynamic stiffness parameters: a, b
     - Damping parameters: C2, C1
-    - Working curve: WCType, k1, k2
+    - Working curve: OWC path, WCType, k1, k2
     - Initial positions of points
-    - SYROPE IC (Tmax, Tmean)
+    - Initial Tmax/Tmean from the LINES section, with legacy SYROPE IC fallback
 
     Returns a dict with keys:
     - line_types, working_curves, points, lines, syrope_ic (raw section data)
@@ -52,6 +52,56 @@ def parse_syrope_inputs(file_path):
         if s.startswith('(-)'):
             return False
         return True
+
+    def _parse_syrope_settings(settings_path: str):
+        """Parse a standalone Syrope settings file.
+
+        Expected data rows follow the format:
+        <value> <key> <optional description...>
+        """
+        parsed: Dict[str, Any] = {}
+        recognized = False
+
+        with open(settings_path, 'r', encoding='utf-8') as f:
+            for raw in f:
+                if not _is_data_row(raw):
+                    continue
+
+                tokens = raw.split()
+                if len(tokens) < 2:
+                    continue
+
+                value = tokens[0]
+                name = tokens[1].lower()
+
+                if name == 'owc':
+                    parsed['owc_path'] = value
+                    recognized = True
+                elif name == 'wctype':
+                    parsed['WCType'] = value.upper()
+                    recognized = True
+                elif name == 'k1':
+                    parsed['k1'] = _as_float(value)
+                    recognized = True
+                elif name == 'k2':
+                    parsed['k2'] = _as_float(value)
+                    recognized = True
+
+        if not recognized:
+            return None
+
+        missing = {'owc_path', 'WCType', 'k1', 'k2'} - set(parsed.keys())
+        if missing:
+            missing_list = ', '.join(sorted(missing))
+            raise ValueError(
+                f"Missing required Syrope setting(s) in {settings_path}: {missing_list}"
+            )
+
+        parsed['settings_path'] = settings_path
+        parsed['owc_path_resolved'] = os.path.normpath(
+            os.path.join(os.path.dirname(settings_path), parsed['owc_path'])
+        )
+        return parsed
 
     current_section = None
     results: Dict[str, Any] = {
@@ -110,11 +160,11 @@ def parse_syrope_inputs(file_path):
                 spec = ea_token[len('SYROPE:'):]
                 parts = spec.split('|')
                 if len(parts) >= 3:
-                    owc_path = parts[0]
+                    syrope_ref = parts[0]
                     a = _as_float(parts[1])
                     b = _as_float(parts[2])
                 else:
-                    owc_path = parts[0] if parts else ''
+                    syrope_ref = parts[0] if parts else ''
                     a = float('nan')
                     b = float('nan')
 
@@ -126,13 +176,38 @@ def parse_syrope_inputs(file_path):
                     C2 = float('nan')
                     C1 = float('nan')
 
+                syrope_path_resolved = None
+                settings_info = None
+                if syrope_ref:
+                    syrope_path_resolved = os.path.normpath(
+                        os.path.join(os.path.dirname(file_path), syrope_ref)
+                    )
+                    settings_info = _parse_syrope_settings(syrope_path_resolved)
+
                 results['line_types'][line_type] = {
-                    'owc_path': owc_path,
+                    'syrope_ref': syrope_ref,
+                    'syrope_path_resolved': syrope_path_resolved,
                     'a': a,
                     'b': b,
                     'C2': C2,
                     'C1': C1,
                 }
+                if settings_info is not None:
+                    results['working_curves'][line_type] = {
+                        'owc_path': settings_info['owc_path'],
+                        'owc_path_resolved': settings_info['owc_path_resolved'],
+                        'WCType': settings_info['WCType'],
+                        'k1': settings_info['k1'],
+                        'k2': settings_info['k2'],
+                        'settings_path': settings_info['settings_path'],
+                    }
+                else:
+                    # Backward compatibility: the SYROPE token may still point
+                    # directly to the OWC lookup table, with WCType/k1/k2 coming
+                    # from the legacy "SYROPE WORKING CURVES" section.
+                    results['line_types'][line_type]['owc_path'] = syrope_ref
+                    if syrope_path_resolved:
+                        results['line_types'][line_type]['owc_path_resolved'] = syrope_path_resolved
 
         elif current_section == 'working_curves':
             # Expected columns: LineType WCType k1 k2
@@ -141,14 +216,16 @@ def parse_syrope_inputs(file_path):
             if len(tokens) < 4:
                 continue
             line_type = tokens[0]
-            wc_type = tokens[1]
+            wc_type = tokens[1].upper()
             k1 = _as_float(tokens[2])
             k2 = _as_float(tokens[3])
-            results['working_curves'][line_type] = {
-                'WCType': wc_type,
-                'k1': k1,
-                'k2': k2,
-            }
+            wc_info = results['working_curves'].setdefault(line_type, {})
+            if 'settings_path' not in wc_info:
+                wc_info.update({
+                    'WCType': wc_type,
+                    'k1': k1,
+                    'k2': k2,
+                })
 
         elif current_section == 'points':
             # Expected columns:
@@ -169,7 +246,7 @@ def parse_syrope_inputs(file_path):
 
         elif current_section == 'lines':
             # Expected columns:
-            # Line LineType NodeA NodeB UnstrLen NumSegs Flags/Outputs
+            # Line LineType NodeA NodeB UnstrLen NumSegs Flags/Outputs [Tmax0 Tmean0]
             if not tokens or tokens[0].lower() in {'line', 'nodea'}:
                 continue
             if len(tokens) < 6:
@@ -181,6 +258,13 @@ def parse_syrope_inputs(file_path):
             unstr_len = _as_float(tokens[4])
             num_segs = int(tokens[5])
             flags = tokens[6] if len(tokens) >= 7 else ''
+
+            tmax = None
+            tmean = None
+            if len(tokens) >= 9 and tokens[7] != '-' and tokens[8] != '-':
+                tmax = _as_float(tokens[7])
+                tmean = _as_float(tokens[8])
+
             results['lines'][line_id] = {
                 'line_type': line_type,
                 'nodeA': node_a,
@@ -188,6 +272,8 @@ def parse_syrope_inputs(file_path):
                 'unstrLen': unstr_len,
                 'numSegs': num_segs,
                 'flags': flags,
+                'Tmax': tmax,
+                'Tmean': tmean,
             }
 
         elif current_section == 'syrope_ic':
@@ -216,14 +302,19 @@ def parse_syrope_inputs(file_path):
         lt_info = results['line_types'].get(line_type, {})
         wc_info = results['working_curves'].get(line_type, {})
         ic_info = results['syrope_ic'].get(line_id, {})
-        owc_path = lt_info.get('owc_path')
-        owc_path_resolved = None
-        if owc_path:
-            owc_path_resolved = os.path.normpath(os.path.join(os.path.dirname(file_path), owc_path))
+        owc_path = wc_info.get('owc_path', lt_info.get('owc_path'))
+        owc_path_resolved = wc_info.get('owc_path_resolved', lt_info.get('owc_path_resolved'))
+        if owc_path and not owc_path_resolved:
+            owc_path_resolved = os.path.normpath(
+                os.path.join(os.path.dirname(file_path), owc_path)
+            )
 
         results['line_summary'][line_id] = {
             'owc_path': owc_path,
             'owc_path_resolved': owc_path_resolved,
+            'syrope_ref': lt_info.get('syrope_ref'),
+            'syrope_path_resolved': lt_info.get('syrope_path_resolved'),
+            'settings_path': wc_info.get('settings_path'),
             'a': lt_info.get('a'),
             'b': lt_info.get('b'),
             'C2': lt_info.get('C2'),
@@ -232,8 +323,8 @@ def parse_syrope_inputs(file_path):
             'k1': wc_info.get('k1'),
             'k2': wc_info.get('k2'),
             'eps0': ((results['points'].get(node_a, {}).get('xyz', (0, 0, 0))[0] - results['points'].get(node_b, {}).get('xyz', (0, 0, 0))[0]) / line_info.get('unstrLen', 1)) - 1.0,
-            'Tmax': ic_info.get('Tmax'),
-            'Tmean': ic_info.get('Tmean'),
+            'Tmax': line_info.get('Tmax') if line_info.get('Tmax') is not None else ic_info.get('Tmax'),
+            'Tmean': line_info.get('Tmean') if line_info.get('Tmean') is not None else ic_info.get('Tmean'),
         }
 
     return results
@@ -263,7 +354,7 @@ def read_owc_dat(owc_file_path):
         'tension': data[:, 1],
     }
 
-def mean_strain_and_mean_tension_history(rope, eps0, Tmax0, dt, Tdur, n_phase=6):
+def mean_strain_and_mean_tension_history(rope, eps0, Tmax0, Tmean0, dt, Tdur, n_phase=6):
     Tmax1 = Tmax0
     Tmax2 = np.interp(3.0 * eps0, rope.owc_strain, rope.owc_tension)
 
@@ -330,6 +421,10 @@ def build_syrope_from_summary(summary):
     wc_type = summary.get('WCType')
     eps0 = summary.get('eps0')
     tmax = summary.get('Tmax')
+    tmean = summary.get('Tmean')
+
+    if tmax is None or tmean is None:
+        raise ValueError('Missing initial Tmax/Tmean for Syrope verification')
 
     owc_data = read_owc_dat(summary.get('owc_path_resolved'))
     rope = Syrope(
@@ -343,7 +438,7 @@ def build_syrope_from_summary(summary):
         c1,
         c2,
     )
-    return rope, eps0, tmax
+    return rope, eps0, tmax, tmean
 
 def compute_relative_l2_error(reference, numerical):
     return np.sqrt(np.sum((numerical - reference) ** 2) / np.sum(reference ** 2))
@@ -591,12 +686,13 @@ def main():
             continue
         print(f"Line {first_line_id} summary: {summary}")
 
-        rope, eps0, tmax = build_syrope_from_summary(summary)
+        rope, eps0, tmax, tmean = build_syrope_from_summary(summary)
 
-        # Check if Tmax from input file is consistent with target Tmax
+        # Check if initial tensions from input file are consistent with the target values
         assert isclose(abs(tmax - Tmax0) / Tmax0, 0.0, abs_tol=1e-3), f"Input Tmax {tmax} is not close to target Tmax {Tmax0}"
+        assert isclose(abs(tmean - Tmean0) / Tmean0, 0.0, abs_tol=1e-3), f"Input Tmean {tmean} is not close to target Tmean {Tmean0}"
 
-        time, strain_ref, mean_tension_ref, wc_strain_1, wc_tension_1, wc_strain_2, wc_tension_2, Tmax1, Tmax2 = mean_strain_and_mean_tension_history(rope, eps0, tmax, 0.1, Tdur)
+        time, strain_ref, mean_tension_ref, wc_strain_1, wc_tension_1, wc_strain_2, wc_tension_2, Tmax1, Tmax2 = mean_strain_and_mean_tension_history(rope, eps0, tmax, tmean, 0.1, Tdur)
 
         # L2 error between numerical and reference mean tension
         error = compute_relative_l2_error(mean_tension_ref, tension_num)
