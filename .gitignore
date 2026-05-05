@@ -10,9 +10,12 @@
 !input/owc.dat
 !input/linear_wc/
 !input/linear_wc/**/*.txt
+!input/linear_wc/**/*.dat
 !input/exp_wc/
 !input/exp_wc/**/*.txt
+!input/exp_wc/**/*.dat
 !input/quadratic_wc/
 !input/quadratic_wc/**/*.txt
+!input/quadratic_wc/**/*.dat
 
 *.pyc
